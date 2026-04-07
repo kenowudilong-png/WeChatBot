@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">WeChatBot</string>
+    <string name="accessibility_description">WeChatBot 无障碍服务：用于监听和操控企微/微信消息，实现AI自动回复。</string>
+</resources>
