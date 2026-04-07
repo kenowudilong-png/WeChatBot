@@ -36,7 +36,7 @@ android {
 
 dependencies {
     // Assists 框架（通过 JitPack）
-    implementation "com.github.ven-coder.Assists:assists:v3.2.220"
+    implementation "com.github.ven-coder.assists:assists-base:v3.2.219"
 
     // NanoHTTPD
     implementation "org.nanohttpd:nanohttpd:2.3.1"
