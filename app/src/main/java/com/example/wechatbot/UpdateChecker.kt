@@ -6,7 +6,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.net.Uri
-import android.os.Build
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
@@ -22,11 +21,21 @@ import java.net.URL
 /**
  * 应用更新检查器
  * 从 GitHub Releases 获取最新版本并下载安装
+ * 使用 GitHub 镜像加速国内下载
  */
 object UpdateChecker {
 
+    // 直连 GitHub API（较小的 JSON 数据，通常还行）
     private const val GITHUB_API_URL =
         "https://api.github.com/repos/kenowudilong-png/WeChatBot/releases/tags/latest"
+
+    // GitHub 镜像加速列表（用于下载 APK 大文件）
+    private val MIRROR_PREFIXES = listOf(
+        "https://ghfast.top/",
+        "https://ghproxy.cc/",
+        "https://gh-proxy.com/",
+        "" // 最后用直连兜底
+    )
 
     var onLog: ((String) -> Unit)? = null
     var onStatus: ((UpdateStatus) -> Unit)? = null
@@ -64,8 +73,8 @@ object UpdateChecker {
                 val conn = url.openConnection() as HttpURLConnection
                 conn.requestMethod = "GET"
                 conn.setRequestProperty("Accept", "application/vnd.github.v3+json")
-                conn.connectTimeout = 10000
-                conn.readTimeout = 10000
+                conn.connectTimeout = 15000
+                conn.readTimeout = 15000
 
                 if (conn.responseCode != 200) {
                     postLog("检查更新失败: HTTP ${conn.responseCode}")
@@ -86,17 +95,15 @@ object UpdateChecker {
                     return@Thread
                 }
 
-                // 比较版本：从 release notes 中提取 commit sha，简单比较
-                // 因为我们用 "latest" tag 覆盖发布，只要有新 release 就认为有更新
                 val releaseName = release.name ?: "unknown"
                 postLog("最新版本: $releaseName")
                 postLog("APK 大小: ${(apkAsset.size ?: 0) / 1024 / 1024}MB")
-                postLog("下载地址: ${apkAsset.downloadUrl}")
 
                 postStatus(UpdateStatus.UPDATE_AVAILABLE)
 
-                // 直接开始下载
-                downloadAndInstall(context, apkAsset.downloadUrl!!, apkAsset.name!!)
+                // 尝试用镜像加速下载
+                val originalUrl = apkAsset.downloadUrl!!
+                downloadWithMirror(context, originalUrl, apkAsset.name!!)
 
             } catch (e: Exception) {
                 postLog("检查更新异常: ${e.message}")
@@ -106,11 +113,49 @@ object UpdateChecker {
     }
 
     /**
+     * 依次尝试镜像下载，哪个能连上用哪个
+     */
+    private fun downloadWithMirror(context: Context, originalUrl: String, fileName: String) {
+        Thread {
+            for (mirror in MIRROR_PREFIXES) {
+                val proxyUrl = if (mirror.isEmpty()) originalUrl else "$mirror$originalUrl"
+                val mirrorName = if (mirror.isEmpty()) "直连" else mirror.trimEnd('/')
+                postLog("尝试下载: $mirrorName")
+
+                try {
+                    // 先测试连接是否可用（HEAD 请求）
+                    val testConn = URL(proxyUrl).openConnection() as HttpURLConnection
+                    testConn.requestMethod = "HEAD"
+                    testConn.connectTimeout = 8000
+                    testConn.readTimeout = 8000
+                    testConn.instanceFollowRedirects = true
+
+                    val code = testConn.responseCode
+                    testConn.disconnect()
+
+                    if (code in 200..399) {
+                        postLog("镜像可用: $mirrorName (HTTP $code)")
+                        downloadAndInstall(context, proxyUrl, fileName)
+                        return@Thread
+                    } else {
+                        postLog("镜像不可用: $mirrorName (HTTP $code)")
+                    }
+                } catch (e: Exception) {
+                    postLog("镜像连接失败: $mirrorName (${e.message})")
+                }
+            }
+
+            postLog("所有下载源均失败")
+            postStatus(UpdateStatus.ERROR)
+        }.start()
+    }
+
+    /**
      * 使用 DownloadManager 下载 APK 并安装
      */
     private fun downloadAndInstall(context: Context, url: String, fileName: String) {
         postStatus(UpdateStatus.DOWNLOADING)
-        postLog("开始下载更新...")
+        postLog("开始下载: $url")
 
         try {
             // 删除旧文件
