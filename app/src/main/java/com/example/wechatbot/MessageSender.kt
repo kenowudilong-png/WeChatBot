@@ -1,14 +1,10 @@
 package com.example.wechatbot
 
-import android.os.Handler
-import android.os.Looper
 import android.view.accessibility.AccessibilityNodeInfo
 import com.ven.assists.AssistsCore
 import com.ven.assists.AssistsCore.click
 import com.ven.assists.AssistsCore.setNodeText
-import com.ven.assists.AssistsCore.txt
 import com.ven.assists.service.AssistsService
-import kotlinx.coroutines.*
 
 /**
  * 消息发送器
@@ -16,55 +12,42 @@ import kotlinx.coroutines.*
  */
 object MessageSender {
 
-    private const val WEWORK_PACKAGE = "com.tencent.wework"
-    private const val WECHAT_PACKAGE = "com.tencent.mm"
-
     var onLog: ((String) -> Unit)? = null
+    // 记录上一次发送的错误详情
+    var lastError: String = ""
+        private set
 
-    // 发送队列锁（确保同时只有一个发送操作）
     private val sendLock = Object()
 
     /**
-     * 发送消息到指定联系人/群
-     * @param to 联系人或群名称
-     * @param content 消息内容
-     * @return 是否发送成功
+     * 发送消息 — 要求手机已停留在聊天界面
      */
     fun sendMessage(to: String, content: String): Boolean {
         synchronized(sendLock) {
             return try {
+                lastError = ""
                 onLog?.invoke("准备发送消息给: $to")
 
                 val rootNode = AssistsService.instance?.rootInActiveWindow
                 if (rootNode == null) {
-                    onLog?.invoke("错误: 无障碍服务未连接")
+                    lastError = "无障碍服务未连接 (rootNode is null)"
+                    onLog?.invoke("错误: $lastError")
                     return false
                 }
 
-                val packageName = rootNode.packageName?.toString() ?: ""
+                val pkg = rootNode.packageName?.toString() ?: "unknown"
+                onLog?.invoke("当前包名: $pkg")
 
-                // 如果当前不在目标聊天界面，需要先进入
-                if (!isInChatRoom(rootNode, to)) {
-                    if (!navigateToChat(rootNode, to)) {
-                        onLog?.invoke("错误: 无法进入聊天 $to")
-                        return false
-                    }
-                    // 等待页面加载
-                    Thread.sleep(1000)
-                }
-
-                // 重新获取 rootNode
-                val currentRoot = AssistsService.instance?.rootInActiveWindow ?: return false
-
-                // 发送消息
-                val result = sendInCurrentChat(currentRoot, content)
+                // 直接在当前界面尝试发送
+                val result = sendInCurrentChat(rootNode, content)
                 if (result) {
                     onLog?.invoke("消息发送成功: $to <- $content")
                 } else {
-                    onLog?.invoke("消息发送失败: $to")
+                    onLog?.invoke("消息发送失败: $lastError")
                 }
                 result
             } catch (e: Exception) {
+                lastError = "异常: ${e.message}"
                 onLog?.invoke("发送异常: ${e.message}")
                 false
             }
@@ -75,179 +58,157 @@ object MessageSender {
      * 在当前聊天界面发送消息
      */
     private fun sendInCurrentChat(rootNode: AccessibilityNodeInfo, content: String): Boolean {
-        // 查找输入框 (EditText)
-        val editText = findNodeByClass(rootNode, "android.widget.EditText")
+        // Step 1: 查找输入框
+        // 企微输入框可能是 EditText，也可能有 resource-id
+        var editText = findNodeByClass(rootNode, "android.widget.EditText")
+
+        // 如果没找到 EditText，尝试通过 resource-id 查找
         if (editText == null) {
-            // 可能是语音模式，尝试切换到文字模式
-            val voiceButton = findNodeByText(rootNode, "按住 说话")
+            editText = findNodeById(rootNode, "com.tencent.wework:id/et_sendmsg")
+        }
+        if (editText == null) {
+            editText = findNodeById(rootNode, "com.tencent.mm:id/chatting_content_et")
+        }
+
+        if (editText == null) {
+            // 可能处于语音输入模式
+            val voiceBtn = findNodeByText(rootNode, "按住 说话")
                 ?: findNodeByText(rootNode, "按住说话")
-            if (voiceButton != null) {
-                // 点击语音按钮前面的控件切换到文字模式
-                val prevNode = findPrevSibling(voiceButton)
-                prevNode?.click()
-                Thread.sleep(500)
-                // 重新查找
-                val newRoot = AssistsService.instance?.rootInActiveWindow ?: return false
-                return sendInCurrentChat(newRoot, content)
+            if (voiceBtn != null) {
+                // 点击切换到键盘模式 (点击语音按钮的前一个兄弟节点)
+                val switchBtn = findPrevSibling(voiceBtn)
+                if (switchBtn != null) {
+                    switchBtn.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    Thread.sleep(600)
+                    val newRoot = AssistsService.instance?.rootInActiveWindow ?: return false
+                    return sendInCurrentChat(newRoot, content)
+                }
             }
-            onLog?.invoke("错误: 未找到输入框")
+
+            lastError = "未找到输入框 (EditText)"
             return false
         }
 
-        // 设置文本
+        onLog?.invoke("找到输入框: class=${editText.className}, id=${editText.viewIdResourceName}")
+
+        // Step 2: 聚焦并设置文本
         editText.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-        Thread.sleep(100)
-        if (!editText.setNodeText(content)) {
-            onLog?.invoke("错误: 设置文本失败")
-            return false
+        Thread.sleep(200)
+
+        val setText = editText.performAction(
+            AccessibilityNodeInfo.ACTION_SET_TEXT,
+            android.os.Bundle().apply {
+                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, content)
+            }
+        )
+        if (!setText) {
+            // 备选方案: 使用粘贴
+            onLog?.invoke("ACTION_SET_TEXT 失败，尝试粘贴方式")
+            val clipboard = AssistsService.instance?.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                    as? android.content.ClipboardManager
+            if (clipboard != null) {
+                clipboard.setPrimaryClip(android.content.ClipData.newPlainText("text", content))
+                editText.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+                Thread.sleep(300)
+            } else {
+                lastError = "设置文本失败 (SET_TEXT 和 PASTE 都失败)"
+                return false
+            }
         }
+
         Thread.sleep(300)
 
-        // 查找发送按钮
-        val newRoot = AssistsService.instance?.rootInActiveWindow ?: return false
-        val sendButton = findSendButton(newRoot)
+        // Step 3: 查找并点击发送按钮
+        val freshRoot = AssistsService.instance?.rootInActiveWindow ?: return false
+        val sendButton = findSendButton(freshRoot)
         if (sendButton == null) {
-            onLog?.invoke("错误: 未找到发送按钮")
+            lastError = "未找到发送按钮"
             return false
         }
 
-        // 点击发送
-        sendButton.click()
+        onLog?.invoke("找到发送按钮: text=${sendButton.text}, class=${sendButton.className}")
+        sendButton.performAction(AccessibilityNodeInfo.ACTION_CLICK)
         Thread.sleep(500)
         return true
     }
 
     /**
-     * 查找发送按钮
-     * 参考 WorkTool 逻辑：查找文本为"发送"的可点击 Button
+     * 查找发送按钮 — 多种策略
      */
     private fun findSendButton(rootNode: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        // 策略1: 查找文本为"发送"的 Button
         val buttons = ArrayList<AccessibilityNodeInfo>()
         findAllByClass(rootNode, "android.widget.Button", buttons)
-        return buttons.firstOrNull { it.text?.toString() == "发送" }
-            ?: buttons.firstOrNull { it.contentDescription?.toString() == "发送" }
-    }
+        val btn = buttons.firstOrNull { it.text?.toString() == "发送" }
+        if (btn != null) return btn
 
-    /**
-     * 判断当前是否在目标聊天房间
-     */
-    private fun isInChatRoom(rootNode: AccessibilityNodeInfo, targetName: String): Boolean {
-        // 查找 ListView (聊天消息列表存在说明在聊天界面)
-        val listView = findNodeByClass(rootNode, "android.widget.ListView") ?: return false
-
-        // 检查标题是否匹配
-        val parent = listView.parent?.parent ?: return false
-        val textNodes = ArrayList<AccessibilityNodeInfo>()
-        findAllByClass(parent, "android.widget.TextView", textNodes, maxDepth = 3)
-
-        return textNodes.any {
-            val text = it.text?.toString() ?: ""
-            text.contains(targetName) || targetName.contains(text.replace(Regex("\\(\\d+\\)$"), ""))
+        // 策略2: 查找 contentDescription 为"发送"的节点
+        val allNodes = ArrayList<AccessibilityNodeInfo>()
+        collectAllNodes(rootNode, allNodes)
+        val descBtn = allNodes.firstOrNull {
+            it.contentDescription?.toString() == "发送" && it.isClickable
         }
-    }
+        if (descBtn != null) return descBtn
 
-    /**
-     * 导航到指定聊天
-     * 通过搜索功能进入聊天
-     */
-    private fun navigateToChat(rootNode: AccessibilityNodeInfo, targetName: String): Boolean {
-        // 先尝试在消息列表中直接查找
-        val listViews = ArrayList<AccessibilityNodeInfo>()
-        findAllByClass(rootNode, "android.widget.ListView", listViews)
-        findAllByClass(rootNode, "androidx.recyclerview.widget.RecyclerView", listViews)
-
-        for (listView in listViews) {
-            for (i in 0 until listView.childCount) {
-                val item = listView.getChild(i) ?: continue
-                val textNodes = ArrayList<AccessibilityNodeInfo>()
-                findAllByClass(item, "android.widget.TextView", textNodes)
-                val matched = textNodes.any { it.text?.toString()?.contains(targetName) == true }
-                if (matched) {
-                    item.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    // 向上查找可点击的父节点
-                    var clickable = item
-                    while (!clickable.isClickable && clickable.parent != null) {
-                        clickable = clickable.parent
-                    }
-                    clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    Thread.sleep(1000)
-                    return true
-                }
-            }
+        // 策略3: 查找文本为"发送"的任意可点击节点
+        val textBtn = allNodes.firstOrNull {
+            it.text?.toString() == "发送" && it.isClickable
         }
+        if (textBtn != null) return textBtn
 
-        onLog?.invoke("未在列表中找到 $targetName，尝试搜索...")
-        // TODO: 实现搜索功能进入聊天
-        return false
+        // 策略4: 查找 resource-id 包含 send 的按钮
+        val idBtn = allNodes.firstOrNull {
+            val id = it.viewIdResourceName ?: ""
+            (id.contains("send") || id.contains("btn_send")) && it.isClickable
+        }
+        return idBtn
     }
 
-    /**
-     * 递归查找指定 className 的第一个节点
-     */
-    private fun findNodeByClass(
-        node: AccessibilityNodeInfo,
-        className: String,
-        maxDepth: Int = 15,
-        currentDepth: Int = 0
-    ): AccessibilityNodeInfo? {
-        if (currentDepth > maxDepth) return null
+    private fun findNodeByClass(node: AccessibilityNodeInfo, className: String, maxDepth: Int = 15, depth: Int = 0): AccessibilityNodeInfo? {
+        if (depth > maxDepth) return null
         if (node.className?.toString() == className) return node
         for (i in 0 until node.childCount) {
-            val child = node.getChild(i) ?: continue
-            val found = findNodeByClass(child, className, maxDepth, currentDepth + 1)
+            val found = node.getChild(i)?.let { findNodeByClass(it, className, maxDepth, depth + 1) }
             if (found != null) return found
         }
         return null
     }
 
-    /**
-     * 递归查找包含指定文本的节点
-     */
-    private fun findNodeByText(
-        node: AccessibilityNodeInfo,
-        text: String,
-        maxDepth: Int = 15,
-        currentDepth: Int = 0
-    ): AccessibilityNodeInfo? {
-        if (currentDepth > maxDepth) return null
+    private fun findNodeById(node: AccessibilityNodeInfo, id: String): AccessibilityNodeInfo? {
+        val results = node.findAccessibilityNodeInfosByViewId(id)
+        return results?.firstOrNull()
+    }
+
+    private fun findNodeByText(node: AccessibilityNodeInfo, text: String, maxDepth: Int = 15, depth: Int = 0): AccessibilityNodeInfo? {
+        if (depth > maxDepth) return null
         if (node.text?.toString() == text) return node
         for (i in 0 until node.childCount) {
-            val child = node.getChild(i) ?: continue
-            val found = findNodeByText(child, text, maxDepth, currentDepth + 1)
+            val found = node.getChild(i)?.let { findNodeByText(it, text, maxDepth, depth + 1) }
             if (found != null) return found
         }
         return null
     }
 
-    /**
-     * 递归查找所有指定 className 的节点
-     */
-    private fun findAllByClass(
-        node: AccessibilityNodeInfo,
-        className: String,
-        result: ArrayList<AccessibilityNodeInfo>,
-        maxDepth: Int = 15,
-        currentDepth: Int = 0
-    ) {
-        if (currentDepth > maxDepth) return
-        if (node.className?.toString() == className) {
-            result.add(node)
-        }
+    private fun findAllByClass(node: AccessibilityNodeInfo, className: String, result: ArrayList<AccessibilityNodeInfo>, maxDepth: Int = 15, depth: Int = 0) {
+        if (depth > maxDepth) return
+        if (node.className?.toString() == className) result.add(node)
         for (i in 0 until node.childCount) {
-            val child = node.getChild(i) ?: continue
-            findAllByClass(child, className, result, maxDepth, currentDepth + 1)
+            node.getChild(i)?.let { findAllByClass(it, className, result, maxDepth, depth + 1) }
         }
     }
 
-    /**
-     * 查找前一个兄弟节点
-     */
+    private fun collectAllNodes(node: AccessibilityNodeInfo, result: ArrayList<AccessibilityNodeInfo>, maxDepth: Int = 10, depth: Int = 0) {
+        if (depth > maxDepth || result.size > 500) return
+        result.add(node)
+        for (i in 0 until node.childCount) {
+            node.getChild(i)?.let { collectAllNodes(it, result, maxDepth, depth + 1) }
+        }
+    }
+
     private fun findPrevSibling(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
         val parent = node.parent ?: return null
         for (i in 0 until parent.childCount) {
-            if (parent.getChild(i) == node && i > 0) {
-                return parent.getChild(i - 1)
-            }
+            if (parent.getChild(i) == node && i > 0) return parent.getChild(i - 1)
         }
         return null
     }

@@ -32,6 +32,7 @@ class HttpApiServer(port: Int = 8080) : NanoHTTPD(port) {
                 uri == "/send" && method == Method.POST -> handleSend(session)
                 uri == "/pause" && method == Method.POST -> handlePause(session)
                 uri == "/clear" && method == Method.POST -> handleClear()
+                uri == "/debug/nodes" && method == Method.GET -> handleDebugNodes()
                 else -> jsonResponse(404, mapOf("code" to 404, "msg" to "not found"))
             }
         } catch (e: Exception) {
@@ -89,11 +90,11 @@ class HttpApiServer(port: Int = 8080) : NanoHTTPD(port) {
         // 在后台线程执行发送操作
         val result = MessageSender.sendMessage(request.to, request.content)
 
-        val data = mapOf("success" to result)
+        val data = mapOf("success" to result, "error" to MessageSender.lastError)
         return jsonResponse(200, mapOf(
             "code" to if (result) 0 else -1,
             "data" to data,
-            "msg" to if (result) "ok" else "发送失败"
+            "msg" to if (result) "ok" else MessageSender.lastError.ifEmpty { "发送失败" }
         ))
     }
 
@@ -117,6 +118,42 @@ class HttpApiServer(port: Int = 8080) : NanoHTTPD(port) {
     private fun handleClear(): Response {
         MessageMonitor.clearMessages()
         return jsonResponse(200, mapOf("code" to 0, "msg" to "ok"))
+    }
+
+    /**
+     * GET /debug/nodes - 调试：获取当前界面节点树
+     */
+    private fun handleDebugNodes(): Response {
+        val rootNode = com.ven.assists.service.AssistsService.instance?.rootInActiveWindow
+        if (rootNode == null) {
+            return jsonResponse(200, mapOf("code" to -1, "msg" to "rootNode is null"))
+        }
+
+        val nodes = mutableListOf<Map<String, Any?>>()
+        fun dumpNode(node: android.view.accessibility.AccessibilityNodeInfo, depth: Int) {
+            if (depth > 8) return // 限制深度
+            nodes.add(mapOf(
+                "depth" to depth,
+                "class" to node.className?.toString(),
+                "text" to node.text?.toString(),
+                "desc" to node.contentDescription?.toString(),
+                "id" to node.viewIdResourceName,
+                "clickable" to node.isClickable,
+                "editable" to (node.className?.toString() == "android.widget.EditText"),
+                "childCount" to node.childCount
+            ))
+            for (i in 0 until node.childCount) {
+                node.getChild(i)?.let { dumpNode(it, depth + 1) }
+            }
+        }
+        dumpNode(rootNode, 0)
+
+        val data = mapOf(
+            "package" to rootNode.packageName?.toString(),
+            "nodeCount" to nodes.size,
+            "nodes" to nodes.take(200) // 限制返回数量
+        )
+        return jsonResponse(200, mapOf("code" to 0, "data" to data, "msg" to "ok"))
     }
 
     /**
