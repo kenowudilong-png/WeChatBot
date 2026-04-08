@@ -152,22 +152,23 @@ object UpdateChecker {
 
     /**
      * 使用 DownloadManager 下载 APK 并安装
+     * 保存到公共 Downloads 目录，卸载 APP 不会被删除
      */
     private fun downloadAndInstall(context: Context, url: String, fileName: String) {
         postStatus(UpdateStatus.DOWNLOADING)
         postLog("开始下载: $url")
 
         try {
-            // 删除旧文件
-            val downloadsDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
-            val existingFile = File(downloadsDir, fileName)
+            // 删除旧文件（公共 Downloads 目录）
+            val publicDownloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            val existingFile = File(publicDownloads, fileName)
             if (existingFile.exists()) existingFile.delete()
 
             val request = DownloadManager.Request(Uri.parse(url))
                 .setTitle("WeChatBot 更新")
                 .setDescription("正在下载新版本...")
                 .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                .setDestinationInExternalFilesDir(context, Environment.DIRECTORY_DOWNLOADS, fileName)
+                .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
 
             val downloadManager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
             val downloadId = downloadManager.enqueue(request)
@@ -178,12 +179,18 @@ object UpdateChecker {
                     val id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1)
                     if (id == downloadId) {
                         context.unregisterReceiver(this)
-                        postLog("下载完成")
+                        postLog("下载完成，文件在: ${publicDownloads.absolutePath}/$fileName")
                         postStatus(UpdateStatus.DOWNLOADED)
 
-                        // 安装 APK
-                        val file = File(downloadsDir, fileName)
-                        installApk(context, file)
+                        // 通过 DownloadManager 获取下载文件的 URI 来安装
+                        val downloadUri = downloadManager.getUriForDownloadedFile(downloadId)
+                        if (downloadUri != null) {
+                            installApk(context, downloadUri)
+                        } else {
+                            // 兜底：用文件路径
+                            val file = File(publicDownloads, fileName)
+                            installApkFromFile(context, file)
+                        }
                     }
                 }
             }
@@ -201,24 +208,38 @@ object UpdateChecker {
     }
 
     /**
-     * 启动安装 APK
+     * 通过 content URI 安装 APK（DownloadManager 返回的 URI）
      */
-    private fun installApk(context: Context, file: File) {
+    private fun installApk(context: Context, uri: Uri) {
         try {
-            postLog("正在启动安装: ${file.absolutePath}")
-
-            val uri = FileProvider.getUriForFile(
-                context,
-                "${context.packageName}.fileprovider",
-                file
-            )
-
+            postLog("正在启动安装...")
             val intent = Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(uri, "application/vnd.android.package-archive")
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
             }
             context.startActivity(intent)
+        } catch (e: Exception) {
+            postLog("安装失败: ${e.message}")
+            postStatus(UpdateStatus.ERROR)
+        }
+    }
 
+    /**
+     * 通过 File 安装 APK（兜底方案）
+     */
+    private fun installApkFromFile(context: Context, file: File) {
+        try {
+            postLog("正在启动安装: ${file.absolutePath}")
+            val uri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                file
+            )
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
+            }
+            context.startActivity(intent)
         } catch (e: Exception) {
             postLog("安装失败: ${e.message}")
             postStatus(UpdateStatus.ERROR)

@@ -23,6 +23,15 @@ jobs:
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
 
+    - name: Generate signing keystore
+      run: |
+        keytool -genkey -v \
+          -keystore app/wechatbot.jks \
+          -keyalg RSA -keysize 2048 -validity 36500 \
+          -alias wechatbot \
+          -storepass wechatbot123 -keypass wechatbot123 \
+          -dname "CN=WeChatBot, OU=Dev, O=Personal, L=SZ, ST=GD, C=CN"
+
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
 
@@ -42,7 +51,6 @@ jobs:
         VERSION_NAME=$(grep -oP 'versionName\s+"\K[^"]+' app/build.gradle)
         echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
         echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
-        echo "tag=v${VERSION_NAME}" >> "$GITHUB_OUTPUT"
 
     - name: Delete existing latest release
       run: gh release delete latest --yes || true

@@ -9,12 +9,25 @@ android {
         applicationId "com.example.wechatbot"
         minSdk rootProject.ext.minSdk
         targetSdk rootProject.ext.targetSdk
-        versionCode 2
-        versionName "1.1.0"
+        versionCode 3
+        versionName "1.2.0"
+    }
+
+    signingConfigs {
+        release {
+            storeFile file("wechatbot.jks")
+            storePassword "wechatbot123"
+            keyAlias "wechatbot"
+            keyPassword "wechatbot123"
+        }
     }
 
     buildTypes {
+        debug {
+            signingConfig signingConfigs.release
+        }
         release {
+            signingConfig signingConfigs.release
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
