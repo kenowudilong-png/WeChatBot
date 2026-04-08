@@ -59,30 +59,45 @@ object MessageSender {
      */
     private fun sendInCurrentChat(rootNode: AccessibilityNodeInfo, content: String): Boolean {
         // Step 1: 查找输入框
-        // 企微输入框可能是 EditText，也可能有 resource-id
-        var editText = findNodeByClass(rootNode, "android.widget.EditText")
+        // 使用系统 API findAccessibilityNodeInfosByViewId（无深度限制，最可靠）
+        var editText: AccessibilityNodeInfo? = null
 
-        // 如果没找到 EditText，尝试通过 resource-id 查找
+        // 微信输入框的 ScrollView 容器 id
+        val wechatScrollView = rootNode.findAccessibilityNodeInfosByViewId("com.tencent.mm:id/o4q")
+        if (!wechatScrollView.isNullOrEmpty()) {
+            // ScrollView 内部的 EditText
+            editText = findNodeByClass(wechatScrollView[0], "android.widget.EditText", maxDepth = 5)
+            if (editText == null) {
+                // 尝试直接点击 ScrollView 激活输入框，再重新获取
+                wechatScrollView[0].performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                Thread.sleep(500)
+                val newRoot = AssistsService.instance?.rootInActiveWindow ?: return false
+                val sv = newRoot.findAccessibilityNodeInfosByViewId("com.tencent.mm:id/o4q")
+                if (!sv.isNullOrEmpty()) {
+                    editText = findNodeByClass(sv[0], "android.widget.EditText", maxDepth = 5)
+                }
+            }
+        }
+
+        // 兜底：全局搜索 EditText（深度加大到 30）
+        if (editText == null) {
+            editText = findNodeByClass(rootNode, "android.widget.EditText", maxDepth = 30)
+        }
+
+        // 企微 resource-id 兜底
         if (editText == null) {
             editText = findNodeById(rootNode, "com.tencent.wework:id/et_sendmsg")
         }
-        if (editText == null) {
-            editText = findNodeById(rootNode, "com.tencent.mm:id/chatting_content_et")
-        }
 
         if (editText == null) {
-            // 可能处于语音输入模式
-            val voiceBtn = findNodeByText(rootNode, "按住 说话")
-                ?: findNodeByText(rootNode, "按住说话")
-            if (voiceBtn != null) {
-                // 点击切换到键盘模式 (点击语音按钮的前一个兄弟节点)
-                val switchBtn = findPrevSibling(voiceBtn)
-                if (switchBtn != null) {
-                    switchBtn.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    Thread.sleep(600)
-                    val newRoot = AssistsService.instance?.rootInActiveWindow ?: return false
-                    return sendInCurrentChat(newRoot, content)
-                }
+            // 可能处于语音输入模式 — 点击"切换到按住说话"按钮切换到键盘
+            val voiceSwitchBtn = findNodeByDesc(rootNode, "切换到按住说话")
+            if (voiceSwitchBtn != null) {
+                onLog?.invoke("检测到语音模式，切换到键盘...")
+                voiceSwitchBtn.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                Thread.sleep(800)
+                val newRoot = AssistsService.instance?.rootInActiveWindow ?: return false
+                return sendInCurrentChat(newRoot, content)
             }
 
             lastError = "未找到输入框 (EditText)"
@@ -134,17 +149,20 @@ object MessageSender {
 
     /**
      * 查找发送按钮 — 多种策略
+     * 注意：微信中发送按钮只有在输入框有文字后才会出现
      */
     private fun findSendButton(rootNode: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        // 收集所有节点（深度 30）
+        val allNodes = ArrayList<AccessibilityNodeInfo>()
+        collectAllNodes(rootNode, allNodes, maxDepth = 30)
+
         // 策略1: 查找文本为"发送"的 Button
-        val buttons = ArrayList<AccessibilityNodeInfo>()
-        findAllByClass(rootNode, "android.widget.Button", buttons)
-        val btn = buttons.firstOrNull { it.text?.toString() == "发送" }
+        val btn = allNodes.firstOrNull {
+            it.className?.toString() == "android.widget.Button" && it.text?.toString() == "发送"
+        }
         if (btn != null) return btn
 
-        // 策略2: 查找 contentDescription 为"发送"的节点
-        val allNodes = ArrayList<AccessibilityNodeInfo>()
-        collectAllNodes(rootNode, allNodes)
+        // 策略2: 查找 contentDescription 为"发送"的可点击节点
         val descBtn = allNodes.firstOrNull {
             it.contentDescription?.toString() == "发送" && it.isClickable
         }
@@ -156,7 +174,13 @@ object MessageSender {
         }
         if (textBtn != null) return textBtn
 
-        // 策略4: 查找 resource-id 包含 send 的按钮
+        // 策略4: 查找文本为"Send"的节点（英文版微信）
+        val sendBtn = allNodes.firstOrNull {
+            it.text?.toString()?.equals("Send", ignoreCase = true) == true && it.isClickable
+        }
+        if (sendBtn != null) return sendBtn
+
+        // 策略5: 查找 resource-id 包含 send 的按钮
         val idBtn = allNodes.firstOrNull {
             val id = it.viewIdResourceName ?: ""
             (id.contains("send") || id.contains("btn_send")) && it.isClickable
@@ -164,7 +188,7 @@ object MessageSender {
         return idBtn
     }
 
-    private fun findNodeByClass(node: AccessibilityNodeInfo, className: String, maxDepth: Int = 15, depth: Int = 0): AccessibilityNodeInfo? {
+    private fun findNodeByClass(node: AccessibilityNodeInfo, className: String, maxDepth: Int = 30, depth: Int = 0): AccessibilityNodeInfo? {
         if (depth > maxDepth) return null
         if (node.className?.toString() == className) return node
         for (i in 0 until node.childCount) {
@@ -179,7 +203,7 @@ object MessageSender {
         return results?.firstOrNull()
     }
 
-    private fun findNodeByText(node: AccessibilityNodeInfo, text: String, maxDepth: Int = 15, depth: Int = 0): AccessibilityNodeInfo? {
+    private fun findNodeByText(node: AccessibilityNodeInfo, text: String, maxDepth: Int = 30, depth: Int = 0): AccessibilityNodeInfo? {
         if (depth > maxDepth) return null
         if (node.text?.toString() == text) return node
         for (i in 0 until node.childCount) {
@@ -189,7 +213,7 @@ object MessageSender {
         return null
     }
 
-    private fun findAllByClass(node: AccessibilityNodeInfo, className: String, result: ArrayList<AccessibilityNodeInfo>, maxDepth: Int = 15, depth: Int = 0) {
+    private fun findAllByClass(node: AccessibilityNodeInfo, className: String, result: ArrayList<AccessibilityNodeInfo>, maxDepth: Int = 30, depth: Int = 0) {
         if (depth > maxDepth) return
         if (node.className?.toString() == className) result.add(node)
         for (i in 0 until node.childCount) {
@@ -197,8 +221,8 @@ object MessageSender {
         }
     }
 
-    private fun collectAllNodes(node: AccessibilityNodeInfo, result: ArrayList<AccessibilityNodeInfo>, maxDepth: Int = 10, depth: Int = 0) {
-        if (depth > maxDepth || result.size > 500) return
+    private fun collectAllNodes(node: AccessibilityNodeInfo, result: ArrayList<AccessibilityNodeInfo>, maxDepth: Int = 30, depth: Int = 0) {
+        if (depth > maxDepth || result.size > 1000) return
         result.add(node)
         for (i in 0 until node.childCount) {
             node.getChild(i)?.let { collectAllNodes(it, result, maxDepth, depth + 1) }
@@ -209,6 +233,16 @@ object MessageSender {
         val parent = node.parent ?: return null
         for (i in 0 until parent.childCount) {
             if (parent.getChild(i) == node && i > 0) return parent.getChild(i - 1)
+        }
+        return null
+    }
+
+    private fun findNodeByDesc(node: AccessibilityNodeInfo, desc: String, maxDepth: Int = 30, depth: Int = 0): AccessibilityNodeInfo? {
+        if (depth > maxDepth) return null
+        if (node.contentDescription?.toString()?.contains(desc) == true) return node
+        for (i in 0 until node.childCount) {
+            val found = node.getChild(i)?.let { findNodeByDesc(it, desc, maxDepth, depth + 1) }
+            if (found != null) return found
         }
         return null
     }

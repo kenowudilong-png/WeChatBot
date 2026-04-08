@@ -110,38 +110,76 @@ object MessageMonitor {
      * 从当前界面读取聊天消息列表
      */
     private fun readChatMessages(rootNode: AccessibilityNodeInfo, app: String) {
-        // 查找聊天消息列表 (ListView)
-        val listViews = rootNode.findAccessibilityNodeInfosByViewId("") // 通过类名查找
-        val allNodes = ArrayList<AccessibilityNodeInfo>()
-        rootNode.findByClassName(allNodes, "android.widget.ListView")
-
-        val listView = allNodes.firstOrNull() ?: return
-
         // 尝试获取房间标题
         val roomName = getRoomTitle(rootNode) ?: "unknown"
         val isGroup = roomName.contains("(") || roomName.contains("（")
 
-        // 遍历 ListView 子节点
-        for (i in 0 until listView.childCount) {
-            val itemNode = listView.getChild(i) ?: continue
-            val textNodes = ArrayList<AccessibilityNodeInfo>()
-            itemNode.findByClassName(textNodes, "android.widget.TextView")
+        // 微信使用 RecyclerView（id: com.tencent.mm:id/bp0）
+        var messageList: AccessibilityNodeInfo? = null
 
-            if (textNodes.size >= 2) {
-                // 通常: [0] = 发送者, [1] = 消息内容 (具体顺序需实测)
-                val sender = textNodes[0].text?.toString() ?: continue
-                val content = textNodes[1].text?.toString() ?: continue
+        // 策略1: 通过 resource-id 查找微信消息列表
+        val recyclerViews = rootNode.findAccessibilityNodeInfosByViewId("com.tencent.mm:id/bp0")
+        if (!recyclerViews.isNullOrEmpty()) {
+            messageList = recyclerViews[0]
+        }
 
-                if (content.isNotBlank() && sender.isNotBlank()) {
-                    addMessage(sender, content, roomName, app, isGroup)
-                }
-            } else if (textNodes.size == 1) {
-                // 单聊时可能只有消息内容
-                val content = textNodes[0].text?.toString() ?: continue
-                if (content.isNotBlank()) {
-                    addMessage("", content, roomName, app, isGroup)
-                }
+        // 策略2: 通过类名查找 RecyclerView
+        if (messageList == null) {
+            val rvNodes = ArrayList<AccessibilityNodeInfo>()
+            rootNode.findByClassName(rvNodes, "androidx.recyclerview.widget.RecyclerView")
+            messageList = rvNodes.firstOrNull()
+        }
+
+        // 策略3: 兼容企微 ListView
+        if (messageList == null) {
+            val lvNodes = ArrayList<AccessibilityNodeInfo>()
+            rootNode.findByClassName(lvNodes, "android.widget.ListView")
+            messageList = lvNodes.firstOrNull()
+        }
+
+        if (messageList == null) return
+
+        // 遍历消息列表子节点
+        for (i in 0 until messageList.childCount) {
+            val itemNode = messageList.getChild(i) ?: continue
+            extractMessageFromNode(itemNode, roomName, app, isGroup)
+        }
+    }
+
+    /**
+     * 从消息节点中提取发送者和内容
+     */
+    private fun extractMessageFromNode(
+        itemNode: AccessibilityNodeInfo,
+        roomName: String,
+        app: String,
+        isGroup: Boolean
+    ) {
+        val textNodes = ArrayList<AccessibilityNodeInfo>()
+        itemNode.findByClassName(textNodes, "android.widget.TextView", maxDepth = 15)
+
+        // 提取发送者（从头像的 contentDescription，如"大哥头像"）
+        var sender = ""
+        val avatarNodes = ArrayList<AccessibilityNodeInfo>()
+        itemNode.findByClassName(avatarNodes, "android.widget.ImageView", maxDepth = 10)
+        for (avatar in avatarNodes) {
+            val desc = avatar.contentDescription?.toString()
+            if (desc != null && desc.endsWith("头像")) {
+                sender = desc.removeSuffix("头像")
+                break
             }
+        }
+
+        // 提取消息文本（排除时间戳等）
+        for (textNode in textNodes) {
+            val text = textNode.text?.toString() ?: continue
+            if (text.isBlank()) continue
+            // 跳过时间戳（如 "09:11", "11:48"）
+            if (text.matches(Regex("^\\d{1,2}:\\d{2}$"))) continue
+            // 跳过很短的非消息文本
+            if (text.length <= 1) continue
+
+            addMessage(sender, text, roomName, app, isGroup)
         }
     }
 
@@ -151,7 +189,7 @@ object MessageMonitor {
     private fun AccessibilityNodeInfo.findByClassName(
         result: ArrayList<AccessibilityNodeInfo>,
         className: String,
-        maxDepth: Int = 10,
+        maxDepth: Int = 25,
         currentDepth: Int = 0
     ) {
         if (currentDepth > maxDepth) return
@@ -166,25 +204,29 @@ object MessageMonitor {
 
     /**
      * 获取聊天房间标题
+     * 从 ActionBar 区域提取标题文字
      */
     private fun getRoomTitle(rootNode: AccessibilityNodeInfo): String? {
-        // 查找 ListView，其前面的兄弟节点通常包含标题
-        val allNodes = ArrayList<AccessibilityNodeInfo>()
-        rootNode.findByClassName(allNodes, "android.widget.ListView")
-        val listView = allNodes.firstOrNull() ?: return null
-
-        val parent = listView.parent?.parent ?: return null
-
-        // 遍历 parent 的子节点，找到 ListView 之前的节点
-        for (i in 0 until parent.childCount) {
-            val child = parent.getChild(i) ?: continue
-            val textNodes = ArrayList<AccessibilityNodeInfo>()
-            child.findByClassName(textNodes, "android.widget.TextView")
-            if (textNodes.isNotEmpty()) {
-                val title = textNodes.firstOrNull()?.text?.toString()
-                if (!title.isNullOrBlank()) return title
+        // 微信：标题在 actionbar 区域，尝试通过已知的 resource-id 查找
+        val titleNodes = rootNode.findAccessibilityNodeInfosByViewId("com.tencent.mm:id/obp")
+        if (!titleNodes.isNullOrEmpty()) {
+            val text = titleNodes[0].text?.toString()
+            if (!text.isNullOrBlank()) return text
+            // 如果 obp 本身没有 text，搜索其子 TextView
+            val childTexts = ArrayList<AccessibilityNodeInfo>()
+            titleNodes[0].findByClassName(childTexts, "android.widget.TextView", maxDepth = 5)
+            for (child in childTexts) {
+                val t = child.text?.toString()
+                if (!t.isNullOrBlank()) return t
             }
         }
+
+        // 企微标题兼容
+        val weworkTitle = rootNode.findAccessibilityNodeInfosByViewId("com.tencent.wework:id/title")
+        if (!weworkTitle.isNullOrEmpty()) {
+            return weworkTitle[0].text?.toString()
+        }
+
         return null
     }
 
