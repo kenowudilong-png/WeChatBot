@@ -1,141 +1,51 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:padding="16dp">
+    android:background="@color/background">
 
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="WeChatBot"
-        android:textSize="24sp"
-        android:textStyle="bold"
-        android:gravity="center"
-        android:layout_marginBottom="24dp" />
-
-    <!-- 无障碍服务状态 -->
+    <!-- Top Bar -->
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
+        android:layout_height="56dp"
+        android:background="@color/primary"
         android:gravity="center_vertical"
-        android:layout_marginBottom="12dp">
+        android:paddingHorizontal="16dp">
 
         <TextView
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="无障碍服务"
-            android:textSize="16sp" />
+            android:text="好软件"
+            android:textColor="#FFFFFF"
+            android:textSize="20sp"
+            android:textStyle="bold" />
 
         <TextView
-            android:id="@+id/tvAccessibilityStatus"
+            android:id="@+id/tvVersion"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="未开启"
-            android:textColor="#F44336"
-            android:textSize="16sp" />
+            android:textColor="#BBFFFFFF"
+            android:textSize="12sp" />
     </LinearLayout>
 
-    <com.google.android.material.button.MaterialButton
-        android:id="@+id/btnOpenAccessibility"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="开启无障碍服务"
-        android:layout_marginBottom="12dp" />
-
-    <!-- HTTP 服务状态 -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center_vertical"
-        android:layout_marginBottom="12dp">
-
-        <TextView
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="HTTP API"
-            android:textSize="16sp" />
-
-        <TextView
-            android:id="@+id/tvHttpStatus"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="未启动"
-            android:textColor="#F44336"
-            android:textSize="16sp" />
-    </LinearLayout>
-
-    <com.google.android.material.button.MaterialButton
-        android:id="@+id/btnToggleHttp"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="启动 HTTP 服务"
-        android:layout_marginBottom="12dp" />
-
-    <TextView
-        android:id="@+id/tvApiAddress"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="API 地址: --"
-        android:textSize="14sp"
-        android:textIsSelectable="true"
-        android:layout_marginBottom="16dp" />
-
-    <!-- 消息统计 -->
-    <TextView
-        android:id="@+id/tvMessageCount"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="已缓存消息: 0"
-        android:textSize="14sp"
-        android:layout_marginBottom="12dp" />
-
-    <!-- 检查更新 -->
-    <com.google.android.material.button.MaterialButton
-        android:id="@+id/btnCheckUpdate"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="检查更新"
-        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-        android:layout_marginBottom="4dp" />
-
-    <TextView
-        android:id="@+id/tvUpdateStatus"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text=""
-        android:textSize="13sp"
-        android:textColor="#666666"
-        android:layout_marginBottom="16dp" />
-
-    <!-- 日志区域 -->
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="日志"
-        android:textSize="16sp"
-        android:textStyle="bold"
-        android:layout_marginBottom="8dp" />
-
-    <ScrollView
-        android:id="@+id/scrollLog"
+    <!-- Fragment Container -->
+    <FrameLayout
+        android:id="@+id/fragmentContainer"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1"
-        android:background="#F5F5F5"
-        android:padding="8dp">
+        android:layout_weight="1" />
 
-        <TextView
-            android:id="@+id/tvLog"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:textSize="12sp"
-            android:fontFamily="monospace"
-            android:text="" />
-    </ScrollView>
+    <!-- Bottom Navigation -->
+    <com.google.android.material.bottomnavigation.BottomNavigationView
+        android:id="@+id/bottomNav"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/card_white"
+        app:itemIconTint="@color/primary"
+        app:itemTextColor="@color/primary"
+        app:menu="@menu/bottom_nav" />
 
 </LinearLayout>

@@ -165,7 +165,7 @@ object UpdateChecker {
             if (existingFile.exists()) existingFile.delete()
 
             val request = DownloadManager.Request(Uri.parse(url))
-                .setTitle("WeChatBot 更新")
+                .setTitle("好软件 更新")
                 .setDescription("正在下载新版本...")
                 .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
                 .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
