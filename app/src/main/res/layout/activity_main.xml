@@ -92,6 +92,24 @@
         android:layout_height="wrap_content"
         android:text="已缓存消息: 0"
         android:textSize="14sp"
+        android:layout_marginBottom="12dp" />
+
+    <!-- 检查更新 -->
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnCheckUpdate"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="检查更新"
+        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+        android:layout_marginBottom="4dp" />
+
+    <TextView
+        android:id="@+id/tvUpdateStatus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text=""
+        android:textSize="13sp"
+        android:textColor="#666666"
         android:layout_marginBottom="16dp" />
 
     <!-- 日志区域 -->

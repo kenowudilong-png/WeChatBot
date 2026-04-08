@@ -64,6 +64,50 @@ class MainActivity : AppCompatActivity() {
                 startHttpServer()
             }
         }
+
+        binding.btnCheckUpdate.setOnClickListener {
+            binding.btnCheckUpdate.isEnabled = false
+            binding.btnCheckUpdate.text = "检查中..."
+            val versionCode = try {
+                packageManager.getPackageInfo(packageName, 0).versionCode
+            } catch (e: Exception) { 1 }
+            UpdateChecker.checkUpdate(this, versionCode)
+        }
+
+        // 更新检查回调
+        UpdateChecker.onLog = { msg -> appendLog("[更新] $msg") }
+        UpdateChecker.onStatus = { status ->
+            when (status) {
+                UpdateChecker.UpdateStatus.CHECKING -> {
+                    binding.tvUpdateStatus.text = "正在检查更新..."
+                }
+                UpdateChecker.UpdateStatus.UPDATE_AVAILABLE -> {
+                    binding.tvUpdateStatus.text = "发现新版本，准备下载..."
+                }
+                UpdateChecker.UpdateStatus.DOWNLOADING -> {
+                    binding.tvUpdateStatus.text = "正在下载..."
+                }
+                UpdateChecker.UpdateStatus.DOWNLOADED -> {
+                    binding.tvUpdateStatus.text = "下载完成，正在安装..."
+                    binding.btnCheckUpdate.isEnabled = true
+                    binding.btnCheckUpdate.text = "检查更新"
+                }
+                UpdateChecker.UpdateStatus.NO_UPDATE -> {
+                    binding.tvUpdateStatus.text = "已是最新版本"
+                    binding.btnCheckUpdate.isEnabled = true
+                    binding.btnCheckUpdate.text = "检查更新"
+                }
+                UpdateChecker.UpdateStatus.ERROR -> {
+                    binding.tvUpdateStatus.text = "更新检查失败"
+                    binding.btnCheckUpdate.isEnabled = true
+                    binding.btnCheckUpdate.text = "检查更新"
+                }
+                UpdateChecker.UpdateStatus.IDLE -> {
+                    binding.btnCheckUpdate.isEnabled = true
+                    binding.btnCheckUpdate.text = "检查更新"
+                }
+            }
+        }
     }
 
     /**
