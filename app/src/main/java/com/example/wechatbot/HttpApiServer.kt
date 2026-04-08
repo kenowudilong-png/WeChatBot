@@ -131,7 +131,7 @@ class HttpApiServer(port: Int = 8080) : NanoHTTPD(port) {
 
         val nodes = mutableListOf<Map<String, Any?>>()
         fun dumpNode(node: android.view.accessibility.AccessibilityNodeInfo, depth: Int) {
-            if (depth > 8) return // 限制深度
+            if (depth > 20) return // 限制深度
             nodes.add(mapOf(
                 "depth" to depth,
                 "class" to node.className?.toString(),
@@ -151,7 +151,7 @@ class HttpApiServer(port: Int = 8080) : NanoHTTPD(port) {
         val data = mapOf(
             "package" to rootNode.packageName?.toString(),
             "nodeCount" to nodes.size,
-            "nodes" to nodes.take(200) // 限制返回数量
+            "nodes" to nodes.take(500) // 限制返回数量
         )
         return jsonResponse(200, mapOf("code" to 0, "data" to data, "msg" to "ok"))
     }
